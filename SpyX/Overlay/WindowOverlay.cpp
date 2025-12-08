@@ -86,8 +86,8 @@ bool CWindowOverlay::BindToWindow(HWND TargetWindow)
     if (Height < 1) Height = 1;
 
     MOverlayWindow = CreateWindowEx(
-        WS_EX_TOPMOST | WS_EX_LAYERED | WS_EX_TOOLWINDOW,
-        L"TapiOverlayClass", L"Overlay",
+        WS_EX_TOPMOST | WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+        L"TAPIOverlayClass", L"Overlay",
         WS_POPUP,
         Rect.left, Rect.top, Width, Height,
         nullptr, nullptr, Wc.hInstance, this
@@ -248,7 +248,7 @@ void CWindowOverlay::Render()
         MRenderCallback.Execute(MContext->GetContext(), MRenderTargetView);
     }
 
-    MSwapChain->Present(1, 0);
+    MSwapChain->Present(0, 0);
 }
 
 bool CWindowOverlay::IsValid() const

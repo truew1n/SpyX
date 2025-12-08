@@ -35,6 +35,7 @@ public:
     void Render();
 
     HWND GetHandle() const { return MOverlayWindow; }
+    HWND GetTargetWindow() const { return MTargetWindow; }
     bool IsValid() const;
 
 private:
