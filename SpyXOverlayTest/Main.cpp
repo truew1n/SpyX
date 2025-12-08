@@ -24,8 +24,77 @@
 // =============================================================
 CD3D11Context     g_D3DContext;
 CWindowOverlay    g_Overlay;
+bool              g_RequestScreenshot = false;
+bool              g_AntiCapture = false;
 
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
+
+// =============================================================
+// SCREENSHOT HELPER
+// =============================================================
+void CaptureScreenshot(HWND targetWindow)
+{
+    RECT rect;
+    GetWindowRect(targetWindow, &rect);
+    int width = rect.right - rect.left;
+    int height = rect.bottom - rect.top;
+
+    HDC hScreenDC = GetDC(NULL);
+    HDC hMemoryDC = CreateCompatibleDC(hScreenDC);
+    HBITMAP hBitmap = CreateCompatibleBitmap(hScreenDC, width, height);
+    HBITMAP hOldBitmap = (HBITMAP)SelectObject(hMemoryDC, hBitmap);
+
+    // Copy screen content
+    BitBlt(hMemoryDC, 0, 0, width, height, hScreenDC, rect.left, rect.top, SRCCOPY);
+
+    // Save to file
+    BITMAP bmpScreen;
+    GetObject(hBitmap, sizeof(BITMAP), &bmpScreen);
+    BITMAPFILEHEADER   bmfHeader;
+    BITMAPINFOHEADER   bi;
+
+    bi.biSize = sizeof(BITMAPINFOHEADER);
+    bi.biWidth = bmpScreen.bmWidth;
+    bi.biHeight = bmpScreen.bmHeight;
+    bi.biPlanes = 1;
+    bi.biBitCount = 32;
+    bi.biCompression = BI_RGB;
+    bi.biSizeImage = 0;
+    bi.biXPelsPerMeter = 0;
+    bi.biYPelsPerMeter = 0;
+    bi.biClrUsed = 0;
+    bi.biClrImportant = 0;
+
+    DWORD dwBmpSize = ((bmpScreen.bmWidth * bi.biBitCount + 31) / 32) * 4 * bmpScreen.bmHeight;
+    HANDLE hDIB = GlobalAlloc(GHND, dwBmpSize);
+    char* lpbitmap = (char*)GlobalLock(hDIB);
+
+    GetDIBits(hScreenDC, hBitmap, 0, (UINT)bmpScreen.bmHeight, lpbitmap, (BITMAPINFO*)&bi, DIB_RGB_COLORS);
+
+    HANDLE hFile = CreateFile(L"screenshot.bmp", GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    DWORD dwBytesWritten = 0;
+    
+    bmfHeader.bfType = 0x4D42; // BM
+    bmfHeader.bfSize = dwBmpSize + sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER);
+    bmfHeader.bfReserved1 = 0;
+    bmfHeader.bfReserved2 = 0;
+    bmfHeader.bfOffBits = (DWORD)sizeof(BITMAPFILEHEADER) + (DWORD)sizeof(BITMAPINFOHEADER);
+
+    WriteFile(hFile, (LPSTR)&bmfHeader, sizeof(BITMAPFILEHEADER), &dwBytesWritten, NULL);
+    WriteFile(hFile, (LPSTR)&bi, sizeof(BITMAPINFOHEADER), &dwBytesWritten, NULL);
+    WriteFile(hFile, (LPSTR)lpbitmap, dwBmpSize, &dwBytesWritten, NULL);
+
+    CloseHandle(hFile);
+    GlobalUnlock(hDIB);
+    GlobalFree(hDIB);
+
+    SelectObject(hMemoryDC, hOldBitmap);
+    DeleteObject(hBitmap);
+    DeleteDC(hMemoryDC);
+    ReleaseDC(NULL, hScreenDC);
+
+    printf("Screenshot saved to screenshot.bmp\n");
+}
 
 bool IsCursorOverImGui()
 {
@@ -348,6 +417,16 @@ void ImGuiRenderLoop(ID3D11DeviceContext *DeviceContext, ID3D11RenderTargetView 
         ImGui::Text("Clicks: %d", clickCount);
         ImGui::Text("State: %d", g_state);
 
+        if (ImGui::Button("Take Screenshot"))
+        {
+            g_RequestScreenshot = true;
+        }
+
+        if (ImGui::Checkbox("Anti-Screen Capture", &g_AntiCapture))
+        {
+            g_Overlay.SetContentProtection(g_AntiCapture);
+        }
+
         ImGui::Text("Modifiers (ImGui): Ctrl:%d Shift:%d Alt:%d", io.KeyCtrl, io.KeyShift, io.KeyAlt);
         ImGui::Text("Modifiers (Async): Ctrl:%d Shift:%d Alt:%d", 
             (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0,
@@ -498,8 +577,34 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
             DispatchMessage(&msg);
         }
         
+        if (g_RequestScreenshot)
+        {
+            g_RequestScreenshot = false;
+            
+            // If Anti-Capture is ON, we need to temporarily disable it to capture the overlay
+            if (g_AntiCapture)
+            {
+                g_Overlay.SetContentProtection(false);
+                Sleep(50); // Wait for DWM update
+            }
+
+            // Capture
+            CaptureScreenshot(g_Overlay.GetTargetWindow());
+
+            // Restore Anti-Capture if it was ON
+            if (g_AntiCapture)
+            {
+                g_Overlay.SetContentProtection(true);
+            }
+        }
+
         g_Overlay.Update();
         g_Overlay.Render();
+
+        // Simple frame limiter to reduce CPU usage and prevent game lag
+        // Target ~144 FPS (approx 7ms per frame)
+        // Since the game likely sets high timer resolution, Sleep(1) is effective.
+        Sleep(1); 
     }
 
     if (g_hKeyboardHook) UnhookWindowsHookEx(g_hKeyboardHook);

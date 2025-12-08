@@ -38,6 +38,8 @@ public:
     HWND GetTargetWindow() const { return MTargetWindow; }
     bool IsValid() const;
 
+    void SetContentProtection(bool Enabled);
+
 private:
     static LRESULT CALLBACK WindowProcedure(HWND WindowHandle, UINT Message, WPARAM WParameter, LPARAM LParameter);
     void UpdatePosition();
