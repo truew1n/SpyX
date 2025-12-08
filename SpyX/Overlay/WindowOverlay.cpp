@@ -1,0 +1,254 @@
+#include "WindowOverlay.h"
+
+#include <dxgi1_2.h>
+#include <dwmapi.h>
+#include <comdef.h>
+
+#pragma comment(lib, "dwmapi.lib")
+
+CWindowOverlay::CWindowOverlay() = default;
+
+CWindowOverlay::~CWindowOverlay()
+{
+    if (MBlendState) MBlendState->Release();
+    if (MRenderTargetView) MRenderTargetView->Release();
+    if (MSwapChain) MSwapChain->Release();
+    if (MOverlayWindow) DestroyWindow(MOverlayWindow);
+    UnregisterClass(L"TapiOverlayClass", GetModuleHandle(nullptr));
+}
+
+LRESULT CALLBACK CWindowOverlay::WindowProcedure(HWND WindowHandle, UINT Message, WPARAM WParameter, LPARAM LParameter)
+{
+    CWindowOverlay *pThis = (CWindowOverlay *)GetWindowLongPtr(WindowHandle, GWLP_USERDATA);
+
+    if (Message == WM_NCCREATE)
+    {
+        LPCREATESTRUCT pCreate = (LPCREATESTRUCT)LParameter;
+        pThis = (CWindowOverlay *)pCreate->lpCreateParams;
+        SetWindowLongPtr(WindowHandle, GWLP_USERDATA, (LONG_PTR)pThis);
+    }
+
+    // 2. Try the user callback (in main.cpp)
+    if (pThis && pThis->MWindowProcedureCallback.IsBound())
+    {
+        LRESULT Result = 0;
+        // If callback returns true, it handled the message -> return its result
+        if (pThis->MWindowProcedureCallback.Execute(WindowHandle, Message, WParameter, LParameter, &Result) == S_OK)
+        {
+            return Result;
+        }
+    }
+
+    // 3. Default internal handling
+    switch (Message)
+    {
+    case WM_ERASEBKGND:
+        return 1; // Prevent GDI flickering
+    }
+
+    return DefWindowProc(WindowHandle, Message, WParameter, LParameter);
+}
+
+bool CWindowOverlay::Initialize(CD3D11Context *Context)
+{
+    MContext = Context;
+
+    // Blend State - Standardowe alfa
+    D3D11_BLEND_DESC BlendDesc = {};
+    BlendDesc.RenderTarget[0].BlendEnable = TRUE;
+    BlendDesc.RenderTarget[0].SrcBlend = D3D11_BLEND_SRC_ALPHA;
+    BlendDesc.RenderTarget[0].DestBlend = D3D11_BLEND_INV_SRC_ALPHA;
+    BlendDesc.RenderTarget[0].BlendOp = D3D11_BLEND_OP_ADD;
+    BlendDesc.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_ONE;
+    BlendDesc.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_ZERO;
+    BlendDesc.RenderTarget[0].BlendOpAlpha = D3D11_BLEND_OP_ADD;
+    BlendDesc.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
+
+    return SUCCEEDED(MContext->GetDevice()->CreateBlendState(&BlendDesc, &MBlendState));
+}
+
+bool CWindowOverlay::BindToWindow(HWND TargetWindow)
+{
+    MTargetWindow = TargetWindow;
+    if (!IsWindow(MTargetWindow)) return false;
+
+    WNDCLASSEX Wc = { sizeof(WNDCLASSEX) };
+    Wc.lpfnWndProc = WindowProcedure;
+    Wc.hInstance = GetModuleHandle(nullptr);
+    Wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
+    Wc.hbrBackground = (HBRUSH)GetStockObject(BLACK_BRUSH);
+    Wc.lpszClassName = L"TAPIOverlayClass";
+    RegisterClassEx(&Wc);
+
+    RECT Rect;
+    GetWindowRect(MTargetWindow, &Rect);
+    int Width = Rect.right - Rect.left;
+    int Height = Rect.bottom - Rect.top;
+    if (Width < 1) Width = 1;
+    if (Height < 1) Height = 1;
+
+    MOverlayWindow = CreateWindowEx(
+        WS_EX_TOPMOST | WS_EX_LAYERED | WS_EX_TOOLWINDOW,
+        L"TapiOverlayClass", L"Overlay",
+        WS_POPUP,
+        Rect.left, Rect.top, Width, Height,
+        nullptr, nullptr, Wc.hInstance, this
+    );
+
+    if (!MOverlayWindow) return false;
+
+    SetLayeredWindowAttributes(MOverlayWindow, 0, 0, LWA_COLORKEY);
+
+    MARGINS Margins = { -1 };
+    DwmExtendFrameIntoClientArea(MOverlayWindow, &Margins);
+
+    IDXGIFactory2 *Factory = nullptr;
+    IDXGIDevice *DxgiDevice = nullptr;
+    HRESULT Hr = MContext->GetDevice()->QueryInterface(__uuidof(IDXGIDevice), (void **)&DxgiDevice);
+    if (FAILED(Hr)) return false;
+
+    IDXGIAdapter *Adapter = nullptr;
+    DxgiDevice->GetParent(__uuidof(IDXGIAdapter), (void **)&Adapter);
+    Adapter->GetParent(__uuidof(IDXGIFactory2), (void **)&Factory);
+
+    DXGI_SWAP_CHAIN_DESC1 SwapChainDesc = {};
+    SwapChainDesc.Width = Width;
+    SwapChainDesc.Height = Height;
+    SwapChainDesc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+    SwapChainDesc.SampleDesc.Count = 1;
+    SwapChainDesc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
+    SwapChainDesc.BufferCount = 1;
+    SwapChainDesc.SwapEffect = DXGI_SWAP_EFFECT_SEQUENTIAL;
+    SwapChainDesc.AlphaMode = DXGI_ALPHA_MODE_UNSPECIFIED;
+    SwapChainDesc.Scaling = DXGI_SCALING_STRETCH;
+
+    Hr = Factory->CreateSwapChainForHwnd(
+        MContext->GetDevice(),
+        MOverlayWindow,
+        &SwapChainDesc,
+        nullptr, nullptr,
+        &MSwapChain
+    );
+
+    Factory->Release();
+    Adapter->Release();
+    DxgiDevice->Release();
+
+    if (FAILED(Hr))
+    {
+        _com_error err(Hr);
+        MessageBox(NULL, err.ErrorMessage(), L"Swap Chain Error", MB_ICONERROR);
+        return false;
+    }
+
+    CreateSizeDependentResources(Width, Height);
+
+    MLastRect = Rect;
+
+    UpdatePosition();
+
+    return true;
+}
+
+void CWindowOverlay::CreateSizeDependentResources(UINT Width, UINT Height)
+{
+    if (MRenderTargetView) { MRenderTargetView->Release(); MRenderTargetView = nullptr; }
+
+    ID3D11Texture2D *BackBuffer = nullptr;
+    MSwapChain->GetBuffer(0, __uuidof(ID3D11Texture2D), (void **)&BackBuffer);
+    if (BackBuffer)
+    {
+        MContext->GetDevice()->CreateRenderTargetView(BackBuffer, nullptr, &MRenderTargetView);
+        BackBuffer->Release();
+    }
+    D3D11_VIEWPORT Vp = { 0.0f, 0.0f, (float)Width, (float)Height, 0.0f, 1.0f };
+    MContext->GetContext()->RSSetViewports(1, &Vp);
+}
+
+void CWindowOverlay::SetRenderCallback(FRenderDelegate Callback)
+{
+    MRenderCallback = Callback;
+}
+
+void CWindowOverlay::SetWindowProcedureCallback(FWindowProcedureDelegate Callback)
+{
+    MWindowProcedureCallback = Callback;
+}
+
+void CWindowOverlay::Update()
+{
+    UpdatePosition();
+}
+
+void CWindowOverlay::UpdatePosition()
+{
+    if (!IsWindow(MTargetWindow)) return;
+
+    bool bTargetMinimized = IsIconic(MTargetWindow);
+
+    if (bTargetMinimized)
+    {
+        if (IsWindowVisible(MOverlayWindow))
+            ShowWindow(MOverlayWindow, SW_HIDE);
+        return;
+    }
+
+    if (!IsWindowVisible(MOverlayWindow))
+        ShowWindow(MOverlayWindow, SW_SHOWNA);
+
+    RECT Rect;
+    GetWindowRect(MTargetWindow, &Rect);
+
+    if (Rect.left != MLastRect.left || Rect.top != MLastRect.top ||
+        Rect.right != MLastRect.right || Rect.bottom != MLastRect.bottom)
+    {
+        int Width = Rect.right - Rect.left;
+        int Height = Rect.bottom - Rect.top;
+        if (Width < 1) Width = 1;
+        if (Height < 1) Height = 1;
+
+        SetWindowPos(MOverlayWindow, HWND_TOPMOST, Rect.left, Rect.top, Width, Height, SWP_NOACTIVATE);
+
+        int OldWidth = MLastRect.right - MLastRect.left;
+        int OldHeight = MLastRect.bottom - MLastRect.top;
+
+        if (Width != OldWidth || Height != OldHeight)
+        {
+            if (MSwapChain)
+            {
+                MContext->GetContext()->OMSetRenderTargets(0, 0, 0);
+                if (MRenderTargetView) { MRenderTargetView->Release(); MRenderTargetView = nullptr; }
+                MSwapChain->ResizeBuffers(0, Width, Height, DXGI_FORMAT_UNKNOWN, 0);
+                CreateSizeDependentResources(Width, Height);
+            }
+        }
+
+        MLastRect = Rect;
+    }
+}
+
+void CWindowOverlay::Render()
+{
+    if (!MRenderTargetView) return;
+
+    if (!IsWindowVisible(MOverlayWindow)) return;
+
+    float ClearColor[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
+    MContext->GetContext()->ClearRenderTargetView(MRenderTargetView, ClearColor);
+
+    float BlendFactor[4] = { 0.f, 0.f, 0.f, 0.f };
+    MContext->GetContext()->OMSetBlendState(MBlendState, BlendFactor, 0xffffffff);
+    MContext->GetContext()->OMSetRenderTargets(1, &MRenderTargetView, nullptr);
+
+    if (MRenderCallback.IsBound())
+    {
+        MRenderCallback.Execute(MContext->GetContext(), MRenderTargetView);
+    }
+
+    MSwapChain->Present(1, 0);
+}
+
+bool CWindowOverlay::IsValid() const
+{
+    return IsWindow(MTargetWindow) && IsWindow(MOverlayWindow);
+}
