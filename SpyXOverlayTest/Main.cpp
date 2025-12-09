@@ -4,6 +4,8 @@
 #include <string>
 #include <stdio.h>
 #include <iostream>
+#include <aclapi.h>
+#include <sddl.h>
 
 // --- IMGUI INCLUDES ---
 // Make sure you have the ImGui files added to your project!
@@ -18,6 +20,7 @@
 #pragma comment(lib, "d3dcompiler.lib")
 #pragma comment(lib, "dwmapi.lib")
 #pragma comment(lib, "user32.lib")
+#pragma comment(lib, "Advapi32.lib")
 
 // =============================================================
 // GLOBALS
@@ -28,6 +31,74 @@ bool              g_RequestScreenshot = false;
 bool              g_AntiCapture = false;
 
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
+
+// =============================================================
+// PROCESS PROTECTION
+// =============================================================
+bool EnablePrivilege(LPCWSTR lpszPrivilege)
+{
+    HANDLE hToken;
+    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, &hToken))
+        return false;
+
+    TOKEN_PRIVILEGES tp;
+    if (!LookupPrivilegeValue(NULL, lpszPrivilege, &tp.Privileges[0].Luid))
+    {
+        CloseHandle(hToken);
+        return false;
+    }
+
+    tp.PrivilegeCount = 1;
+    tp.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED;
+
+    if (!AdjustTokenPrivileges(hToken, FALSE, &tp, sizeof(TOKEN_PRIVILEGES), NULL, NULL))
+    {
+        CloseHandle(hToken);
+        return false;
+    }
+
+    CloseHandle(hToken);
+    return GetLastError() == ERROR_SUCCESS;
+}
+
+bool ProtectCurrentProcess() {
+    // 1. Enable SeSecurityPrivilege to set SACL
+    if (!EnablePrivilege(SE_SECURITY_NAME)) {
+        printf("Failed to enable SeSecurityPrivilege. Run as Admin.\n");
+    }
+
+    HANDLE hProcess = GetCurrentProcess();
+    
+    // Define SDDL:
+    // D: DACL
+    // (D;;GA;;;WD) -> Deny Generic All to World (Everyone)
+    // (A;;GA;;;SY) -> Allow Generic All to System
+    // (A;;GA;;;OW) -> Allow Generic All to Owner
+    // S: SACL
+    // (AU;SAFA;GA;;;WD) -> Audit Success/Failure for Generic All for World
+    const wchar_t* sddl = L"D:(D;;GA;;;WD)(A;;GA;;;SY)(A;;GA;;;OW)S:(AU;SAFA;GA;;;WD)";
+
+    PSECURITY_DESCRIPTOR pNewSD = NULL;
+    if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(
+            sddl, 
+            SDDL_REVISION_1, &pNewSD, NULL)) {
+        printf("ConvertStringSecurityDescriptorToSecurityDescriptorW failed: %d\n", GetLastError());
+        return false;
+    }
+
+    // Set both DACL and SACL
+    SECURITY_INFORMATION secInfo = DACL_SECURITY_INFORMATION | SACL_SECURITY_INFORMATION;
+    
+    if (!SetKernelObjectSecurity(hProcess, secInfo, pNewSD)) {
+        printf("SetKernelObjectSecurity failed: %d\n", GetLastError());
+        LocalFree(pNewSD);
+        return false;
+    }
+
+    LocalFree(pNewSD);
+    printf("Process Protection & Auditing Enabled.\n");
+    return true;
+}
 
 // =============================================================
 // SCREENSHOT HELPER
@@ -507,6 +578,11 @@ HWND DoWindowPicker(HINSTANCE hInst) {
 // MAIN ENTRY
 // =============================================================
 int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
+
+    // 0. Protect Process (Anti-Cheat Evasion Attempt)
+    if (ProtectCurrentProcess()) {
+        // Protection applied
+    }
 
     // Create Console for Debugging
     AllocConsole();
