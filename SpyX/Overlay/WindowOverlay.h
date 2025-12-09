@@ -31,6 +31,9 @@ public:
     void SetOverlayVisibility(bool NewOverlayVisibility);
     bool GetOverlayVisibility();
 
+    void SetVSync(bool Enabled);
+    void SetInputPassThrough(bool Enabled);
+
     void Update();
 
     void Render();
@@ -57,6 +60,7 @@ private:
     ID3D11BlendState *MBlendState = nullptr;
 
     bool MOverlayVisibility = true;
+    bool MVSync = false;
 
     FRenderDelegate MRenderCallback;
     FWindowProcedureDelegate MWindowProcedureCallback;

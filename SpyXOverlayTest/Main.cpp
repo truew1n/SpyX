@@ -463,6 +463,33 @@ void ImGuiRenderLoop(ID3D11DeviceContext *DeviceContext, ID3D11RenderTargetView 
         io.MouseDown[0] = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
     }
 
+    // Update global state for WM_NCHITTEST
+    // This is CRITICAL because when we return HTTRANSPARENT, we stop receiving mouse messages,
+    // so WindowProcedureCallback won't update g_state. We must update it here (per frame).
+    g_state = IsCursorOverImGui();
+
+    // Fix cursor visibility: Only let ImGui control cursor if we are hovering ImGui
+    // This prevents ImGui from forcing the cursor to be visible when playing the game
+    bool overImGui = g_state;
+    
+    // Dynamically toggle WS_EX_TRANSPARENT based on whether we are over ImGui
+    // This ensures that when we are NOT over ImGui, the window is truly transparent to input
+    // and the game receives all mouse events (including raw input).
+    g_Overlay.SetInputPassThrough(!overImGui);
+
+    if (overImGui)
+    {
+        io.ConfigFlags &= ~ImGuiConfigFlags_NoMouseCursorChange;
+        // Ensure cursor is visible when over ImGui
+        while (ShowCursor(TRUE) < 0);
+    }
+    else
+    {
+        io.ConfigFlags |= ImGuiConfigFlags_NoMouseCursorChange;
+        // Force hide cursor when not over ImGui
+        while (ShowCursor(FALSE) >= 0);
+    }
+
     // Manually update modifiers because GetKeyState used by ImGui_ImplWin32_NewFrame 
     // might not be accurate when window is not active.
     io.AddKeyEvent(ImGuiMod_Ctrl, (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0);
@@ -607,6 +634,9 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
         MessageBox(NULL, L"Failed to bind overlay", L"Error", MB_ICONERROR);
         return -1;
     }
+
+    // Enable VSync to reduce GPU usage and prevent stutter
+    g_Overlay.SetVSync(false);
     
     // 4. Setup ImGui
     IMGUI_CHECKVERSION();
@@ -675,13 +705,14 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
         if (g_Overlay.GetOverlayVisibility() != Visibility) {
             g_Overlay.SetOverlayVisibility(Visibility);
         }
+
         g_Overlay.Update();
         g_Overlay.Render();
 
         // Simple frame limiter to reduce CPU usage and prevent game lag
         // Target ~144 FPS (approx 7ms per frame)
         // Since the game likely sets high timer resolution, Sleep(1) is effective.
-        Sleep(1); 
+        //Sleep(1); 
     }
 
     if (g_hKeyboardHook) UnhookWindowsHookEx(g_hKeyboardHook);

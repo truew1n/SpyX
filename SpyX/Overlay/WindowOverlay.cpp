@@ -86,7 +86,7 @@ bool CWindowOverlay::BindToWindow(HWND TargetWindow)
         return false;
     }
 
-    SetLayeredWindowAttributes(MOverlayWindow, 0, 0, LWA_COLORKEY);
+    SetLayeredWindowAttributes(MOverlayWindow, 0, 255, LWA_ALPHA);
 
     MARGINS Margins = { -1 };
     DwmExtendFrameIntoClientArea(MOverlayWindow, &Margins);
@@ -121,6 +121,9 @@ bool CWindowOverlay::BindToWindow(HWND TargetWindow)
         nullptr, nullptr,
         &MSwapChain
     );
+
+    // Prevent DXGI from monitoring the message queue for Alt-Enter
+    Factory->MakeWindowAssociation(MOverlayWindow, DXGI_MWA_NO_ALT_ENTER);
 
     Factory->Release();
     Adapter->Release();
@@ -167,6 +170,33 @@ bool CWindowOverlay::GetOverlayVisibility()
     return MOverlayVisibility;
 }
 
+void CWindowOverlay::SetVSync(bool Enabled)
+{
+    MVSync = Enabled;
+}
+
+void CWindowOverlay::SetInputPassThrough(bool Enabled)
+{
+    if (!MOverlayWindow) return;
+
+    LONG_PTR ExStyle = GetWindowLongPtr(MOverlayWindow, GWL_EXSTYLE);
+    if (Enabled)
+    {
+        if (!(ExStyle & WS_EX_TRANSPARENT))
+        {
+            SetWindowLongPtr(MOverlayWindow, GWL_EXSTYLE, ExStyle | WS_EX_TRANSPARENT);
+        }
+    }
+    else
+    {
+        if (ExStyle & WS_EX_TRANSPARENT)
+        {
+            SetWindowLongPtr(MOverlayWindow, GWL_EXSTYLE, ExStyle & ~WS_EX_TRANSPARENT);
+        }
+    }
+}
+
+
 void CWindowOverlay::Update()
 {
     UpdatePosition();
@@ -178,7 +208,7 @@ void CWindowOverlay::Render()
 
     if (!IsWindowVisible(MOverlayWindow)) return;
 
-    float ClearColor[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
+    float ClearColor[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
     MContext->GetContext()->ClearRenderTargetView(MRenderTargetView, ClearColor);
 
     float BlendFactor[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
@@ -190,7 +220,7 @@ void CWindowOverlay::Render()
         MRenderCallback.Execute(MContext->GetContext(), MRenderTargetView);
     }
 
-    MSwapChain->Present(0, 0);
+    MSwapChain->Present(1, 0);
 }
 
 bool CWindowOverlay::IsValid() const
