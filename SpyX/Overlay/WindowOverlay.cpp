@@ -266,3 +266,14 @@ bool CWindowOverlay::IsValid() const
 {
     return IsWindow(MTargetWindow) && IsWindow(MOverlayWindow);
 }
+
+void CWindowOverlay::SetContentProtection(bool Enabled)
+{
+    if (!MOverlayWindow) return;
+    // WDA_EXCLUDEFROMCAPTURE = 0x00000011 (Windows 10 2004+)
+    // WDA_MONITOR = 0x00000001 (Windows 7+)
+    // We use WDA_EXCLUDEFROMCAPTURE for better protection if available, otherwise system might fallback or fail gracefully.
+    // If you are on older windows, try 0x00000001.
+    DWORD affinity = Enabled ? 0x00000011 : 0x00000000; 
+    SetWindowDisplayAffinity(MOverlayWindow, affinity);
+}
