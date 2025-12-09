@@ -127,21 +127,6 @@ bool CWindowOverlay::BindToWindow(HWND TargetWindow)
     return true;
 }
 
-void CWindowOverlay::CreateSizeDependentResources(UINT Width, UINT Height)
-{
-    if (MRenderTargetView) { MRenderTargetView->Release(); MRenderTargetView = nullptr; }
-
-    ID3D11Texture2D *BackBuffer = nullptr;
-    MSwapChain->GetBuffer(0, __uuidof(ID3D11Texture2D), (void **)&BackBuffer);
-    if (BackBuffer)
-    {
-        MContext->GetDevice()->CreateRenderTargetView(BackBuffer, nullptr, &MRenderTargetView);
-        BackBuffer->Release();
-    }
-    D3D11_VIEWPORT Vp = { 0.0f, 0.0f, (float)Width, (float)Height, 0.0f, 1.0f };
-    MContext->GetContext()->RSSetViewports(1, &Vp);
-}
-
 void CWindowOverlay::SetRenderCallback(FRenderDelegate Callback)
 {
     MRenderCallback = Callback;
@@ -289,4 +274,19 @@ void CWindowOverlay::UpdatePosition()
     {
         SetWindowPos(MOverlayWindow, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
     }
+}
+
+void CWindowOverlay::CreateSizeDependentResources(UINT Width, UINT Height)
+{
+    if (MRenderTargetView) { MRenderTargetView->Release(); MRenderTargetView = nullptr; }
+
+    ID3D11Texture2D *BackBuffer = nullptr;
+    MSwapChain->GetBuffer(0, __uuidof(ID3D11Texture2D), (void **)&BackBuffer);
+    if (BackBuffer)
+    {
+        MContext->GetDevice()->CreateRenderTargetView(BackBuffer, nullptr, &MRenderTargetView);
+        BackBuffer->Release();
+    }
+    D3D11_VIEWPORT Vp = { 0.0f, 0.0f, (float)Width, (float)Height, 0.0f, 1.0f };
+    MContext->GetContext()->RSSetViewports(1, &Vp);
 }
