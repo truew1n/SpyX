@@ -29,8 +29,17 @@ HRESULT CD3D11Context::Initialize()
 
 void CD3D11Context::Cleanup()
 {
-    if (MD3DContext) { MD3DContext->Release(); MD3DContext = nullptr; }
-    if (MD3DDevice) { MD3DDevice->Release(); MD3DDevice = nullptr; }
+    if (MD3DContext)
+    {
+        MD3DContext->Release();
+        MD3DContext = nullptr;
+    }
+
+    if (MD3DDevice)
+    {
+        MD3DDevice->Release();
+        MD3DDevice = nullptr;
+    }
 }
 
 ID3D11Device *CD3D11Context::GetDevice() const
@@ -45,11 +54,17 @@ ID3D11DeviceContext *CD3D11Context::GetContext() const
 
 HRESULT CD3D11Context::CreateDirect3DDevice(void **OutDevice)
 {
-    if (!MD3DDevice) return E_POINTER;
+    if (!MD3DDevice)
+    {
+        return E_POINTER;
+    }
 
     IDXGIDevice *DXGIDevice = nullptr;
     HRESULT HResult = MD3DDevice->QueryInterface(__uuidof(IDXGIDevice), (void **)&DXGIDevice);
-    if (FAILED(HResult)) return HResult;
+    if (FAILED(HResult))
+    {
+        return HResult;
+    }
 
     winrt::com_ptr<::IInspectable> Inspectable;
     HResult = CreateDirect3D11DeviceFromDXGIDevice(DXGIDevice, Inspectable.put());
