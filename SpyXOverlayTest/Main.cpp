@@ -649,11 +649,6 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
             TranslateMessage(&msg);
             DispatchMessage(&msg);
         }
-         bool Visibility = CalculateVisibility(targetHwnd);
-            if (g_Overlay.GetOverlayVisibility() != Visibility) {
-                g_Overlay.SetOverlayVisibility(Visibility);
-            }
-            
         
         if (g_RequestScreenshot)
         {
@@ -676,6 +671,10 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
             }
         }
 
+        bool Visibility = CalculateVisibility(targetHwnd);
+        if (g_Overlay.GetOverlayVisibility() != Visibility) {
+            g_Overlay.SetOverlayVisibility(Visibility);
+        }
         g_Overlay.Update();
         g_Overlay.Render();
 

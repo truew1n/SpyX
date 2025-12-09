@@ -17,37 +17,6 @@ CWindowOverlay::~CWindowOverlay()
     UnregisterClass(L"TAPIOverlayClass", GetModuleHandle(nullptr));
 }
 
-LRESULT CALLBACK CWindowOverlay::WindowProcedure(HWND WindowHandle, UINT Message, WPARAM WParameter, LPARAM LParameter)
-{
-    CWindowOverlay *Overlay = (CWindowOverlay *) GetWindowLongPtr(WindowHandle, GWLP_USERDATA);
-
-    if (Message == WM_NCCREATE)
-    {
-        LPCREATESTRUCT Create = (LPCREATESTRUCT)LParameter;
-        Overlay = (CWindowOverlay *) Create->lpCreateParams;
-        SetWindowLongPtr(WindowHandle, GWLP_USERDATA, (LONG_PTR)Overlay);
-    }
-
-    if (Overlay && Overlay->MWindowProcedureCallback.IsBound())
-    {
-        LRESULT Result = 0;
-        if (Overlay->MWindowProcedureCallback.Execute(WindowHandle, Message, WParameter, LParameter, &Result) == S_OK)
-        {
-            return Result;
-        }
-    }
-
-    switch (Message)
-    {
-        case WM_ERASEBKGND:
-        {
-            return 1;
-        }
-    }
-
-    return DefWindowProc(WindowHandle, Message, WParameter, LParameter);
-}
-
 bool CWindowOverlay::Initialize(CD3D11Context *Context)
 {
     MContext = Context;
@@ -152,6 +121,7 @@ bool CWindowOverlay::BindToWindow(HWND TargetWindow)
 
     MLastRect = Rect;
 
+    UpdateVisiblity();
     UpdatePosition();
 
     return true;
@@ -188,14 +158,7 @@ void CWindowOverlay::SetOverlayVisibility(bool NewOverlayVisibility)
 
     MOverlayVisibility = NewOverlayVisibility;
 
-    if (MOverlayVisibility)
-    {
-        ShowWindow(MOverlayWindow, SW_SHOWNA);
-    }
-    else
-    {
-        ShowWindow(MOverlayWindow, SW_HIDE);
-    }
+    UpdateVisiblity();
 }
 
 bool CWindowOverlay::GetOverlayVisibility()
@@ -206,39 +169,6 @@ bool CWindowOverlay::GetOverlayVisibility()
 void CWindowOverlay::Update()
 {
     UpdatePosition();
-}
-
-void CWindowOverlay::UpdatePosition()
-{
-    RECT Rect;
-    GetWindowRect(MTargetWindow, &Rect);
-
-    if (Rect.left != MLastRect.left || Rect.top != MLastRect.top ||
-        Rect.right != MLastRect.right || Rect.bottom != MLastRect.bottom)
-    {
-        int Width = Rect.right - Rect.left;
-        int Height = Rect.bottom - Rect.top;
-        if (Width < 1) Width = 1;
-        if (Height < 1) Height = 1;
-
-        SetWindowPos(MOverlayWindow, HWND_TOPMOST, Rect.left, Rect.top, Width, Height, SWP_NOACTIVATE);
-
-        int OldWidth = MLastRect.right - MLastRect.left;
-        int OldHeight = MLastRect.bottom - MLastRect.top;
-
-        if (Width != OldWidth || Height != OldHeight)
-        {
-            if (MSwapChain)
-            {
-                MContext->GetContext()->OMSetRenderTargets(0, 0, 0);
-                if (MRenderTargetView) { MRenderTargetView->Release(); MRenderTargetView = nullptr; }
-                MSwapChain->ResizeBuffers(0, Width, Height, DXGI_FORMAT_UNKNOWN, 0);
-                CreateSizeDependentResources(Width, Height);
-            }
-        }
-
-        MLastRect = Rect;
-    }
 }
 
 void CWindowOverlay::Render()
@@ -274,6 +204,89 @@ void CWindowOverlay::SetContentProtection(bool Enabled)
     // WDA_MONITOR = 0x00000001 (Windows 7+)
     // We use WDA_EXCLUDEFROMCAPTURE for better protection if available, otherwise system might fallback or fail gracefully.
     // If you are on older windows, try 0x00000001.
-    DWORD affinity = Enabled ? 0x00000011 : 0x00000000; 
+    DWORD affinity = Enabled ? 0x00000011 : 0x00000000;
     SetWindowDisplayAffinity(MOverlayWindow, affinity);
+}
+
+LRESULT CALLBACK CWindowOverlay::WindowProcedure(HWND WindowHandle, UINT Message, WPARAM WParameter, LPARAM LParameter)
+{
+    CWindowOverlay *Overlay = (CWindowOverlay *)GetWindowLongPtr(WindowHandle, GWLP_USERDATA);
+
+    if (Message == WM_NCCREATE)
+    {
+        LPCREATESTRUCT Create = (LPCREATESTRUCT)LParameter;
+        Overlay = (CWindowOverlay *)Create->lpCreateParams;
+        SetWindowLongPtr(WindowHandle, GWLP_USERDATA, (LONG_PTR)Overlay);
+    }
+
+    if (Overlay && Overlay->MWindowProcedureCallback.IsBound())
+    {
+        LRESULT Result = 0;
+        if (Overlay->MWindowProcedureCallback.Execute(WindowHandle, Message, WParameter, LParameter, &Result) == S_OK)
+        {
+            return Result;
+        }
+    }
+
+    switch (Message)
+    {
+        case WM_ERASEBKGND:
+        {
+            return 1;
+        }
+    }
+
+    return DefWindowProc(WindowHandle, Message, WParameter, LParameter);
+}
+
+void CWindowOverlay::UpdateVisiblity()
+{
+    if (MOverlayVisibility)
+    {
+        ShowWindow(MOverlayWindow, SW_SHOWNA);
+    }
+    else
+    {
+        ShowWindow(MOverlayWindow, SW_HIDE);
+    }
+}
+
+void CWindowOverlay::UpdatePosition()
+{
+    RECT Rect;
+    GetWindowRect(MTargetWindow, &Rect);
+
+    bool PositionChangedTopLeft = Rect.left != MLastRect.left || Rect.top != MLastRect.top;
+    bool PositionChangedBottomRight = Rect.right != MLastRect.right || Rect.bottom != MLastRect.bottom;
+    bool PositionChanged = PositionChangedTopLeft || PositionChangedBottomRight;
+
+    if (PositionChanged)
+    {
+        int Width = Rect.right - Rect.left;
+        int Height = Rect.bottom - Rect.top;
+        if (Width < 1) Width = 1;
+        if (Height < 1) Height = 1;
+
+        SetWindowPos(MOverlayWindow, HWND_TOPMOST, Rect.left, Rect.top, Width, Height, SWP_NOACTIVATE);
+
+        int OldWidth = MLastRect.right - MLastRect.left;
+        int OldHeight = MLastRect.bottom - MLastRect.top;
+
+        if (Width != OldWidth || Height != OldHeight)
+        {
+            if (MSwapChain)
+            {
+                MContext->GetContext()->OMSetRenderTargets(0, 0, 0);
+                if (MRenderTargetView) { MRenderTargetView->Release(); MRenderTargetView = nullptr; }
+                MSwapChain->ResizeBuffers(0, Width, Height, DXGI_FORMAT_UNKNOWN, 0);
+                CreateSizeDependentResources(Width, Height);
+            }
+        }
+
+        MLastRect = Rect;
+    }
+    else
+    {
+        SetWindowPos(MOverlayWindow, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+    }
 }

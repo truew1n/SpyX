@@ -43,6 +43,7 @@ public:
 
 private:
     static LRESULT CALLBACK WindowProcedure(HWND WindowHandle, UINT Message, WPARAM WParameter, LPARAM LParameter);
+    void UpdateVisiblity();
     void UpdatePosition();
     void CreateSizeDependentResources(UINT Width, UINT Height);
 
