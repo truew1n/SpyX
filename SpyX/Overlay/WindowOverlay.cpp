@@ -10,10 +10,26 @@ CWindowOverlay::CWindowOverlay() = default;
 
 CWindowOverlay::~CWindowOverlay()
 {
-    if (MBlendState) MBlendState->Release();
-    if (MRenderTargetView) MRenderTargetView->Release();
-    if (MSwapChain) MSwapChain->Release();
-    if (MOverlayWindow) DestroyWindow(MOverlayWindow);
+    if (MBlendState)
+    {
+        MBlendState->Release();
+    }
+
+    if (MRenderTargetView)
+    {
+        MRenderTargetView->Release();
+    }
+    if (MSwapChain)
+    {
+        MSwapChain->Release();
+    }
+
+    if (MOverlayWindow)
+    {
+        DestroyWindow(MOverlayWindow);
+    }
+
+    // DLLs must unregister created classes manually
     UnregisterClass(L"TAPIOverlayClass", GetModuleHandle(nullptr));
 }
 
@@ -184,13 +200,16 @@ bool CWindowOverlay::IsValid() const
 
 void CWindowOverlay::SetContentProtection(bool Enabled)
 {
-    if (!MOverlayWindow) return;
+    if (!MOverlayWindow)
+    {
+        return;
+    }
     // WDA_EXCLUDEFROMCAPTURE = 0x00000011 (Windows 10 2004+)
     // WDA_MONITOR = 0x00000001 (Windows 7+)
     // We use WDA_EXCLUDEFROMCAPTURE for better protection if available, otherwise system might fallback or fail gracefully.
     // If you are on older windows, try 0x00000001.
-    DWORD affinity = Enabled ? 0x00000011 : 0x00000000;
-    SetWindowDisplayAffinity(MOverlayWindow, affinity);
+    DWORD Affinity = Enabled ? 0x00000011 : 0x00000000;
+    SetWindowDisplayAffinity(MOverlayWindow, Affinity);
 }
 
 LRESULT CALLBACK CWindowOverlay::WindowProcedure(HWND WindowHandle, UINT Message, WPARAM WParameter, LPARAM LParameter)
@@ -247,24 +266,24 @@ void CWindowOverlay::UpdatePosition()
 
     if (PositionChanged)
     {
-        int Width = Rect.right - Rect.left;
-        int Height = Rect.bottom - Rect.top;
-        if (Width < 1) Width = 1;
-        if (Height < 1) Height = 1;
+        int NewWidth = Rect.right - Rect.left;
+        int NewHeight = Rect.bottom - Rect.top;
+        if (NewWidth < 1) NewWidth = 1;
+        if (NewHeight < 1) NewHeight = 1;
 
-        SetWindowPos(MOverlayWindow, HWND_TOPMOST, Rect.left, Rect.top, Width, Height, SWP_NOACTIVATE);
+        SetWindowPos(MOverlayWindow, HWND_TOPMOST, Rect.left, Rect.top, NewWidth, NewHeight, SWP_NOACTIVATE);
 
         int OldWidth = MLastRect.right - MLastRect.left;
         int OldHeight = MLastRect.bottom - MLastRect.top;
 
-        if (Width != OldWidth || Height != OldHeight)
+        if (NewWidth != OldWidth || NewHeight != OldHeight)
         {
             if (MSwapChain)
             {
                 MContext->GetContext()->OMSetRenderTargets(0, 0, 0);
                 if (MRenderTargetView) { MRenderTargetView->Release(); MRenderTargetView = nullptr; }
-                MSwapChain->ResizeBuffers(0, Width, Height, DXGI_FORMAT_UNKNOWN, 0);
-                CreateSizeDependentResources(Width, Height);
+                MSwapChain->ResizeBuffers(0, NewWidth, NewHeight, DXGI_FORMAT_UNKNOWN, 0);
+                CreateSizeDependentResources(NewWidth, NewHeight);
             }
         }
 
@@ -278,7 +297,11 @@ void CWindowOverlay::UpdatePosition()
 
 void CWindowOverlay::CreateSizeDependentResources(UINT Width, UINT Height)
 {
-    if (MRenderTargetView) { MRenderTargetView->Release(); MRenderTargetView = nullptr; }
+    if (MRenderTargetView)
+    {
+        MRenderTargetView->Release();
+        MRenderTargetView = nullptr;
+    }
 
     ID3D11Texture2D *BackBuffer = nullptr;
     MSwapChain->GetBuffer(0, __uuidof(ID3D11Texture2D), (void **)&BackBuffer);
@@ -287,6 +310,6 @@ void CWindowOverlay::CreateSizeDependentResources(UINT Width, UINT Height)
         MContext->GetDevice()->CreateRenderTargetView(BackBuffer, nullptr, &MRenderTargetView);
         BackBuffer->Release();
     }
-    D3D11_VIEWPORT Vp = { 0.0f, 0.0f, (float)Width, (float)Height, 0.0f, 1.0f };
-    MContext->GetContext()->RSSetViewports(1, &Vp);
+    D3D11_VIEWPORT NewViewport = { 0.0f, 0.0f, (float)Width, (float)Height, 0.0f, 1.0f };
+    MContext->GetContext()->RSSetViewports(1, &NewViewport);
 }
