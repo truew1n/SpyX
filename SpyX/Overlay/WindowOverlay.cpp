@@ -170,9 +170,9 @@ bool CWindowOverlay::GetOverlayVisibility()
     return MOverlayVisibility;
 }
 
-void CWindowOverlay::SetVSync(bool Enabled)
+void CWindowOverlay::SetSwapInterval(UINT NewSwapInterval)
 {
-    MVSync = Enabled;
+    MSwapInterval = NewSwapInterval;
 }
 
 void CWindowOverlay::SetInputPassThrough(bool Enabled)
@@ -196,7 +196,6 @@ void CWindowOverlay::SetInputPassThrough(bool Enabled)
     }
 }
 
-
 void CWindowOverlay::Update()
 {
     UpdatePosition();
@@ -219,8 +218,8 @@ void CWindowOverlay::Render()
     {
         MRenderCallback.Execute(MContext->GetContext(), MRenderTargetView);
     }
-
-    MSwapChain->Present(1, 0);
+    
+    MSwapChain->Present(MSwapInterval, 0);
 }
 
 bool CWindowOverlay::IsValid() const
@@ -294,6 +293,7 @@ void CWindowOverlay::UpdatePosition()
     bool PositionChangedBottomRight = Rect.right != MLastRect.right || Rect.bottom != MLastRect.bottom;
     bool PositionChanged = PositionChangedTopLeft || PositionChangedBottomRight;
 
+
     if (PositionChanged)
     {
         int NewWidth = Rect.right - Rect.left;
@@ -301,7 +301,7 @@ void CWindowOverlay::UpdatePosition()
         if (NewWidth < 1) NewWidth = 1;
         if (NewHeight < 1) NewHeight = 1;
 
-        SetWindowPos(MOverlayWindow, HWND_TOPMOST, Rect.left, Rect.top, NewWidth, NewHeight, SWP_NOACTIVATE);
+        SetWindowPos(MOverlayWindow, HWND_TOP, Rect.left, Rect.top, NewWidth, NewHeight, SWP_NOACTIVATE);
 
         int OldWidth = MLastRect.right - MLastRect.left;
         int OldHeight = MLastRect.bottom - MLastRect.top;
@@ -321,7 +321,7 @@ void CWindowOverlay::UpdatePosition()
     }
     else
     {
-        SetWindowPos(MOverlayWindow, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+        SetWindowPos(MOverlayWindow, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
     }
 }
 
