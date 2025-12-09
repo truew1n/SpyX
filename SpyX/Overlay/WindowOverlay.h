@@ -31,8 +31,9 @@ public:
     void SetOverlayVisibility(bool NewOverlayVisibility);
     bool GetOverlayVisibility();
 
-    void Update();
+    void SetSwapInterval(UINT NewSwapInterval);
 
+    void Update();
     void Render();
 
     HWND GetHandle() const { return MOverlayWindow; }
@@ -56,11 +57,13 @@ private:
     ID3D11RenderTargetView *MRenderTargetView = nullptr;
     ID3D11BlendState *MBlendState = nullptr;
 
-    bool MOverlayVisibility = true;
+    UINT MSwapInterval = 0;
 
     FRenderDelegate MRenderCallback;
     FWindowProcedureDelegate MWindowProcedureCallback;
     RECT MLastRect = { 0 };
+
+    bool MOverlayVisibility = true;
 };
 
 #endif
