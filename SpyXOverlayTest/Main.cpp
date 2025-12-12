@@ -636,7 +636,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
     }
 
     // Enable VSync to reduce GPU usage and prevent stutter
-    g_Overlay.SetSwapInterval(0);
+    g_Overlay.SetSwapInterval(1);
     
     // 4. Setup ImGui
     IMGUI_CHECKVERSION();
