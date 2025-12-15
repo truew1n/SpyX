@@ -23,6 +23,13 @@ public:
     void StopCapture();
 
     HRESULT AcquireLatestFrame(ID3D11Texture2D **OutTexture);
+    
+    // Wait for a new frame with timeout (milliseconds). Returns frame count or 0 on timeout.
+    HRESULT WaitForNewFrame(ID3D11Texture2D **OutTexture, int timeoutMs);
+    
+    // Get current frame counter
+    uint64_t GetFrameCount() const { return MFrameCount.load(); }
+    
     bool IsCapturing() const;
 
 private:
@@ -34,6 +41,7 @@ private:
     std::mutex MMutex;
     ID3D11Texture2D *MLatestFrame = nullptr;
     std::atomic<bool> MIsCapturing = false;
+    std::atomic<uint64_t> MFrameCount = 0;  // Frame counter for detecting new frames
 
     CD3D11Context *MContext = nullptr;
     FFrameDelegate MFrameCallback;

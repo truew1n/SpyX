@@ -6,7 +6,8 @@
 #include <winrt/Windows.Foundation.Metadata.h>
 #include <windows.graphics.capture.interop.h>
 #include <windows.graphics.directx.direct3d11.interop.h>
-#include <DispatcherQueue.h> 
+#include <DispatcherQueue.h>
+#include <chrono> 
 
 #pragma comment(lib, "windowsapp.lib")
 #pragma comment(lib, "CoreMessaging.lib")
@@ -89,11 +90,41 @@ void CWindowCapture::OnFrameReceived(ID3D11Texture2D *Texture)
         if (MLatestFrame) MLatestFrame->Release();
         MLatestFrame = Texture;
         MLatestFrame->AddRef();
+        MFrameCount++;  // Increment frame counter
     }
 
     if (MFrameCallback.IsBound())
     {
         MFrameCallback.Execute(Texture);
+    }
+}
+
+HRESULT CWindowCapture::WaitForNewFrame(ID3D11Texture2D **OutTexture, int timeoutMs)
+{
+    if (!OutTexture) return E_INVALIDARG;
+    *OutTexture = nullptr;
+    
+    if (!MIsCapturing) return E_FAIL;
+    
+    uint64_t startFrame = MFrameCount.load();
+    auto startTime = std::chrono::steady_clock::now();
+    
+    while (true) {
+        // Check if new frame arrived
+        if (MFrameCount.load() > startFrame) {
+            return AcquireLatestFrame(OutTexture);
+        }
+        
+        // Check timeout
+        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - startTime).count();
+        if (elapsed >= timeoutMs) {
+            // Timeout - return whatever we have (even if old)
+            return AcquireLatestFrame(OutTexture);
+        }
+        
+        // Small sleep to not burn CPU
+        Sleep(1);
     }
 }
 

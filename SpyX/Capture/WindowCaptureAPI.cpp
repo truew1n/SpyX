@@ -58,10 +58,57 @@ static CWindowCapture* g_WindowCapture = nullptr;
 static std::atomic<bool> g_Initialized{false};
 static std::atomic<bool> g_IsCapturing{false};  // True when actively capturing a window
 
+// Last successful frame cache
+static void* g_LastFrameData = nullptr;
+static int g_LastFrameWidth = 0;
+static int g_LastFrameHeight = 0;
+static int g_LastFrameStride = 0;
+static size_t g_LastFrameSize = 0;
+
 // Helper to set error
 static void SetError(const char* error) {
     std::lock_guard<std::mutex> lock(g_ErrorMutex);
     g_LastError = error ? error : "Unknown error";
+}
+
+// Helper to cache a successful frame
+static void CacheFrame(void* data, int width, int height, int stride) {
+    size_t dataSize = (size_t)stride * (size_t)height;
+    
+    // Reallocate if needed
+    if (g_LastFrameData == nullptr || g_LastFrameSize < dataSize) {
+        if (g_LastFrameData) {
+            HeapFree(GetProcessHeap(), 0, g_LastFrameData);
+        }
+        g_LastFrameData = HeapAlloc(GetProcessHeap(), 0, dataSize);
+        g_LastFrameSize = dataSize;
+    }
+    
+    if (g_LastFrameData) {
+        memcpy(g_LastFrameData, data, dataSize);
+        g_LastFrameWidth = width;
+        g_LastFrameHeight = height;
+        g_LastFrameStride = stride;
+    }
+}
+
+// Helper to return cached frame
+static CaptureResponse GetCachedFrame() {
+    CaptureResponse response;
+    
+    if (g_LastFrameData && g_LastFrameWidth > 0 && g_LastFrameHeight > 0) {
+        size_t dataSize = (size_t)g_LastFrameStride * (size_t)g_LastFrameHeight;
+        response.frameData = HeapAlloc(GetProcessHeap(), 0, dataSize);
+        if (response.frameData) {
+            memcpy(response.frameData, g_LastFrameData, dataSize);
+            response.width = g_LastFrameWidth;
+            response.height = g_LastFrameHeight;
+            response.stride = g_LastFrameStride;
+            response.success = true;
+        }
+    }
+    
+    return response;
 }
 
 // Process a single frame capture
@@ -70,14 +117,25 @@ static CaptureResponse ProcessCaptureFrame() {
     
     if (!g_Initialized.load() || !g_WindowCapture || !g_WindowCapture->IsCapturing()) {
         response.error = "Not capturing";
+        // Try to return cached frame
+        CaptureResponse cached = GetCachedFrame();
+        if (cached.success) {
+            return cached;
+        }
         return response;
     }
     
-    // Get the latest frame
+    // Wait for a new frame with 50ms timeout
+    // This ensures we get a fresh frame after user input/rendering
     ID3D11Texture2D* texture = nullptr;
-    HRESULT hr = g_WindowCapture->AcquireLatestFrame(&texture);
+    HRESULT hr = g_WindowCapture->WaitForNewFrame(&texture, 50);
     if (FAILED(hr) || !texture) {
         response.error = "No frame available";
+        // Try to return cached frame
+        CaptureResponse cached = GetCachedFrame();
+        if (cached.success) {
+            return cached;
+        }
         return response;
     }
     
@@ -90,6 +148,11 @@ static CaptureResponse ProcessCaptureFrame() {
     if (desc.Width == 0 || desc.Height == 0 || desc.Width > 8192 || desc.Height > 8192) {
         texture->Release();
         response.error = "Invalid texture dimensions";
+        // Try to return cached frame
+        CaptureResponse cached = GetCachedFrame();
+        if (cached.success) {
+            return cached;
+        }
         return response;
     }
     
@@ -121,6 +184,11 @@ static CaptureResponse ProcessCaptureFrame() {
     if (FAILED(hr)) {
         stagingTexture->Release();
         response.error = "Failed to map staging texture";
+        // Try to return cached frame
+        CaptureResponse cached = GetCachedFrame();
+        if (cached.success) {
+            return cached;
+        }
         return response;
     }
     
@@ -135,10 +203,18 @@ static CaptureResponse ProcessCaptureFrame() {
         g_D3DContext->GetContext()->Unmap(stagingTexture, 0);
         stagingTexture->Release();
         response.error = "Failed to allocate memory";
+        // Try to return cached frame
+        CaptureResponse cached = GetCachedFrame();
+        if (cached.success) {
+            return cached;
+        }
         return response;
     }
     
     memcpy(response.frameData, mapped.pData, dataSize);
+    
+    // Cache this successful frame for future fallback
+    CacheFrame(response.frameData, response.width, response.height, response.stride);
     
     // Cleanup
     g_D3DContext->GetContext()->Unmap(stagingTexture, 0);
@@ -227,6 +303,15 @@ static void CaptureThreadMain() {
                         if (g_WindowCapture) {
                             g_WindowCapture->StopCapture();
                         }
+                        // Clear frame cache when stopping capture
+                        if (g_LastFrameData) {
+                            HeapFree(GetProcessHeap(), 0, g_LastFrameData);
+                            g_LastFrameData = nullptr;
+                            g_LastFrameWidth = 0;
+                            g_LastFrameHeight = 0;
+                            g_LastFrameStride = 0;
+                            g_LastFrameSize = 0;
+                        }
                         response.success = true;
                         break;
                     }
@@ -238,6 +323,15 @@ static void CaptureThreadMain() {
                     
                     case CaptureRequestType::Cleanup: {
                         g_IsCapturing = false;
+                        // Clear frame cache
+                        if (g_LastFrameData) {
+                            HeapFree(GetProcessHeap(), 0, g_LastFrameData);
+                            g_LastFrameData = nullptr;
+                            g_LastFrameWidth = 0;
+                            g_LastFrameHeight = 0;
+                            g_LastFrameStride = 0;
+                            g_LastFrameSize = 0;
+                        }
                         if (g_WindowCapture) {
                             g_WindowCapture->StopCapture();
                             delete g_WindowCapture;
@@ -482,8 +576,8 @@ WC_API bool WC_CaptureFrameInfo(WC_FrameInfo* outInfo) {
     return true;
 }
 
-// Global variables to cache last frame for GetFrameBufferSize
-static std::atomic<int> g_LastFrameSize{0};
+// Global variable to cache last frame buffer size for WC_GetFrameBufferSize
+static std::atomic<int> g_CachedBufferSize{0};
 
 WC_API int WC_GetFrameBufferSize() {
     if (!g_ThreadRunning.load() || !g_IsCapturing.load()) {
@@ -491,7 +585,7 @@ WC_API int WC_GetFrameBufferSize() {
     }
     
     // Return cached size if available
-    int cached = g_LastFrameSize.load();
+    int cached = g_CachedBufferSize.load();
     if (cached > 0) {
         return cached;
     }
@@ -506,7 +600,7 @@ WC_API int WC_GetFrameBufferSize() {
     }
     
     int size = response.stride * response.height;
-    g_LastFrameSize = size;
+    g_CachedBufferSize = size;
     
     // Free the frame data since we're just checking size
     HeapFree(GetProcessHeap(), 0, response.frameData);
@@ -563,7 +657,7 @@ WC_API int WC_CaptureFrameToBuffer(void* buffer, int bufferSize, int* outWidth, 
     *outStride = response.stride;
     
     // Cache the size for future GetFrameBufferSize calls
-    g_LastFrameSize = requiredSize;
+    g_CachedBufferSize = requiredSize;
     
     return requiredSize;
 }
