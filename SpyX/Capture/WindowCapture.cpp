@@ -135,11 +135,11 @@ HRESULT CWindowCapture::StartCapture(HWND WindowHandle)
     StopCapture();
 
     HRESULT HResult = MImplementation->CreateCaptureItem(WindowHandle);
-    if (FAILED(HResult)) return HResult;
+    if (FAILED(HResult)) return HResult; // Returns specific HRESULT from CreateCaptureItem
 
     WDT::IDirect3DDevice Direct3DDevice{ nullptr };
     HResult = MContext->CreateDirect3DDevice(winrt::put_abi(Direct3DDevice));
-    if (FAILED(HResult)) return HResult;
+    if (FAILED(HResult)) return MAKE_HRESULT(SEVERITY_ERROR, FACILITY_ITF, 0x0002); // D3D device creation failed
 
     MImplementation->MDevice = Direct3DDevice;
     MImplementation->MLastSize = MImplementation->MItem.Size();

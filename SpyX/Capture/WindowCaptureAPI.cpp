@@ -289,7 +289,9 @@ static void CaptureThreadMain() {
                         } else {
                             hr = g_WindowCapture->StartCapture(request.hwnd);
                             if (FAILED(hr)) {
-                                response.error = "Failed to start capture";
+                                char errBuf[128];
+                                sprintf_s(errBuf, "Failed to start capture (HRESULT: 0x%08X)", hr);
+                                response.error = errBuf;
                             } else {
                                 g_IsCapturing = true;
                                 response.success = true;
