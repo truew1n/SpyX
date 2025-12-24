@@ -7,6 +7,7 @@
 #include <windows.graphics.capture.interop.h>
 #include <windows.graphics.directx.direct3d11.interop.h>
 #include <DispatcherQueue.h>
+#include <dwmapi.h>
 #include <chrono> 
 
 #pragma comment(lib, "windowsapp.lib")
@@ -191,15 +192,65 @@ void CWindowCapture::StopCapture()
 
 HRESULT CWindowCapture::SImplementation::CreateCaptureItem(HWND HWnd)
 {
+    // Validate window handle first
+    if (!HWnd || !IsWindow(HWnd)) {
+        OutputDebugStringA("[WindowCapture] Invalid window handle\n");
+        return E_HANDLE;
+    }
+    
+    // Log window info for diagnostics (don't fail on these - WGC might still work)
+    LONG style = GetWindowLongA(HWnd, GWL_STYLE);
+    LONG exStyle = GetWindowLongA(HWnd, GWL_EXSTYLE);
+    char buf[512];
+    sprintf_s(buf, "[WindowCapture] Window styles: 0x%08X, exStyles: 0x%08X, WS_VISIBLE=%d\n",
+        style, exStyle, (style & WS_VISIBLE) ? 1 : 0);
+    OutputDebugStringA(buf);
+    
+    // Get window rect
+    RECT rect;
+    if (GetWindowRect(HWnd, &rect)) {
+        sprintf_s(buf, "[WindowCapture] Window rect: %d,%d - %d,%d (size: %dx%d)\n",
+            rect.left, rect.top, rect.right, rect.bottom,
+            rect.right - rect.left, rect.bottom - rect.top);
+        OutputDebugStringA(buf);
+    }
+    
+    // Check if window is iconic (minimized) - this IS a hard fail
+    if (IsIconic(HWnd)) {
+        OutputDebugStringA("[WindowCapture] Window is minimized - cannot capture\n");
+        return MAKE_HRESULT(SEVERITY_ERROR, FACILITY_ITF, 0x0011); // Custom: Window minimized
+    }
+    
+    // Check DWM cloaking (window might be on another virtual desktop)
+    BOOL isCloaked = FALSE;
+    DwmGetWindowAttribute(HWnd, DWMWA_CLOAKED, &isCloaked, sizeof(isCloaked));
+    if (isCloaked) {
+        OutputDebugStringA("[WindowCapture] Window is DWM-cloaked (possibly on another virtual desktop)\n");
+        // Don't fail - WGC might still work
+    }
+    
+    // Log IsWindowVisible result but don't fail on it
+    // MTA and some games have complex window hierarchies where this returns false
+    if (!IsWindowVisible(HWnd)) {
+        OutputDebugStringA("[WindowCapture] WARNING: IsWindowVisible returned false, but attempting capture anyway\n");
+    }
+    
     auto ActivationFactory = winrt::get_activation_factory<WGC::GraphicsCaptureItem>();
     auto InteropFactory = ActivationFactory.as<IGraphicsCaptureItemInterop>();
     if (!InteropFactory) return E_NOINTERFACE;
 
-    return InteropFactory->CreateForWindow(
+    HRESULT hr = InteropFactory->CreateForWindow(
         HWnd,
         winrt::guid_of<WGC::GraphicsCaptureItem>(),
         winrt::put_abi(MItem)
     );
+    
+    if (FAILED(hr)) {
+        sprintf_s(buf, "[WindowCapture] CreateForWindow failed: 0x%08X\n", hr);
+        OutputDebugStringA(buf);
+    }
+    
+    return hr;
 }
 
 void CWindowCapture::SImplementation::OnFrameArrived(WGC::Direct3D11CaptureFramePool const &Sender, WF::IInspectable const &)

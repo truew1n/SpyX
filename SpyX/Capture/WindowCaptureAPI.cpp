@@ -289,8 +289,27 @@ static void CaptureThreadMain() {
                         } else {
                             hr = g_WindowCapture->StartCapture(request.hwnd);
                             if (FAILED(hr)) {
-                                char errBuf[128];
-                                sprintf_s(errBuf, "Failed to start capture (HRESULT: 0x%08X)", hr);
+                                // Provide human-readable error messages
+                                const char* detail = nullptr;
+                                switch (hr) {
+                                    case E_INVALIDARG:
+                                        detail = "Window not compatible with capture (try windowed mode, not fullscreen)";
+                                        break;
+                                    case E_ACCESSDENIED:
+                                        detail = "Access denied - run as administrator or check permissions";
+                                        break;
+                                    case MAKE_HRESULT(SEVERITY_ERROR, FACILITY_ITF, 0x0011):
+                                        detail = "Window is minimized - restore the window first";
+                                        break;
+                                    default:
+                                        detail = nullptr;
+                                }
+                                char errBuf[256];
+                                if (detail) {
+                                    sprintf_s(errBuf, "Failed to start capture: %s (HRESULT: 0x%08X)", detail, hr);
+                                } else {
+                                    sprintf_s(errBuf, "Failed to start capture (HRESULT: 0x%08X)", hr);
+                                }
                                 response.error = errBuf;
                             } else {
                                 g_IsCapturing = true;
